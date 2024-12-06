@@ -1,0 +1,25 @@
+{
+  "name": "car-ticket-booking-backend",
+  "version": "1.0.0",
+  "description": "Backend for Car Ticket Booking App",
+  "main": "server.js",
+  "scripts": {
+    "start": "node app.js",
+    "dev": "nodemon app.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.9",
+    "bcryptjs": "^2.4.3",
+    "crypto": "^1.0.1",
+    "dotenv": "^10.0.0",
+    "express": "^4.17.1",
+    "jsonwebtoken": "^8.5.1",
+    "mongoose": "^6.0.12",
+    "nodemailer": "^6.9.16",
+    "openrouteservice-js": "^0.4.1",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.14"
+  }
+}
