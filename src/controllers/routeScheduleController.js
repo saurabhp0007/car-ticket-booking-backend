@@ -183,56 +183,72 @@ exports.updateRouteSchedule = catchAsync(async (req, res) => {
 });
 
 exports.deleteRouteSchedule = catchAsync(async (req, res) => {
-    const scheduleId = req.params.routeId;
-    const { date } = req.query;
+    try {
+        console.log('\n=== Delete Route Schedule Request ===');
+        console.log('Headers:', req.headers);
+        console.log('URL:', req.url);
+        console.log('Method:', req.method);
+        console.log('Query Parameters:', req.query);
+        console.log('Route Parameters:', req.params);
 
-    if (!scheduleId || !date) {
-        return res.status(400).json({
-            status: 'fail',
-            message: 'Please provide both schedule ID and date to delete the schedule'
+        // Fix: Check for routeId in params since that's what we're receiving
+        const scheduleId = req.params.routeId || req.params.scheduleId;
+        const { date } = req.query;
+
+        console.log('\n=== Processing Parameters ===');
+        console.log('Extracted scheduleId:', scheduleId);
+        console.log('Extracted date:', date);
+
+        if (!scheduleId || !date) {
+            console.log('Validation Failed - Missing Parameters');
+            return res.status(400).json({
+                status: 'fail',
+                message: 'Please provide both schedule ID and date to delete the schedule'
+            });
+        }
+
+        console.log('\n=== Finding Schedule ===');
+        const schedule = await RouteSchedule.findById(scheduleId);
+        console.log('Found schedule:', schedule ? 'Yes' : 'No');
+
+        if (!schedule) {
+            console.log('Schedule not found');
+            return res.status(404).json({
+                status: 'fail',
+                message: 'No schedule found for this ID'
+            });
+        }
+
+        // Check for booked seats
+        const hasBookedSeats = schedule.seatLayout.some(seat => seat.isBooked);
+        console.log('Has booked seats:', hasBookedSeats);
+
+        if (hasBookedSeats) {
+            console.log('Deletion blocked - Has booked seats');
+            return res.status(400).json({
+                status: 'fail',
+                message: 'Cannot delete schedule with booked seats'
+            });
+        }
+
+        console.log('\n=== Deleting Schedule ===');
+        await RouteSchedule.findByIdAndDelete(scheduleId);
+        console.log('Schedule deleted successfully');
+
+        return res.status(200).json({
+            status: 'success',
+            message: 'Schedule deleted successfully'
+        });
+
+    } catch (error) {
+        console.error('\n=== Error in deleteRouteSchedule ===');
+        console.error('Error details:', error);
+        return res.status(500).json({
+            status: 'error',
+            message: 'Internal server error',
+            error: error.message
         });
     }
-
-    // Convert date string to Date object
-    const queryDate = new Date(date);
-    queryDate.setUTCHours(0, 0, 0, 0);  // Set to start of day in UTC
-
-    console.log('Attempting to delete schedule with:', {
-        _id: scheduleId,
-        date: queryDate
-    });
-
-    // Find the specific schedule by _id
-    const schedule = await RouteSchedule.findOne({
-        _id: scheduleId,
-        date: queryDate
-    }).exec();
-
-    console.log('Found schedule:', schedule); // Debug log
-
-    if (!schedule) {
-        return res.status(404).json({
-            status: 'fail',
-            message: 'No schedule found for this ID on the specified date'
-        });
-    }
-
-    // Check if there are any booked seats
-    const hasBookedSeats = schedule.seatLayout.some(seat => seat.isBooked);
-    if (hasBookedSeats) {
-        return res.status(400).json({
-            status: 'fail',
-            message: 'Cannot delete schedule with booked seats'
-        });
-    }
-
-    // Delete the schedule
-    await RouteSchedule.findByIdAndDelete(schedule._id);
-
-    res.status(204).json({
-        status: 'success',
-        data: null
-    });
 });
 
 exports.getAvailableSeats = catchAsync(async (req, res) => {
