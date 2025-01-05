@@ -1,5 +1,6 @@
 const RouteSchedule = require('../models/RouteSchedule');
 const catchAsync = require('../utils/catchAsync');
+const Booking = require('../models/Booking');
 
 exports.createRouteSchedule = catchAsync(async (req, res) => {
     const {
@@ -191,7 +192,6 @@ exports.deleteRouteSchedule = catchAsync(async (req, res) => {
         console.log('Query Parameters:', req.query);
         console.log('Route Parameters:', req.params);
 
-        // Fix: Check for routeId in params since that's what we're receiving
         const scheduleId = req.params.routeId || req.params.scheduleId;
         const { date } = req.query;
 
@@ -200,40 +200,61 @@ exports.deleteRouteSchedule = catchAsync(async (req, res) => {
         console.log('Extracted date:', date);
 
         if (!scheduleId || !date) {
-            console.log('Validation Failed - Missing Parameters');
             return res.status(400).json({
                 status: 'fail',
                 message: 'Please provide both schedule ID and date to delete the schedule'
             });
         }
 
-        console.log('\n=== Finding Schedule ===');
+        // Find the schedule
         const schedule = await RouteSchedule.findById(scheduleId);
-        console.log('Found schedule:', schedule ? 'Yes' : 'No');
-
         if (!schedule) {
-            console.log('Schedule not found');
             return res.status(404).json({
                 status: 'fail',
                 message: 'No schedule found for this ID'
             });
         }
 
-        // Check for booked seats
-        const hasBookedSeats = schedule.seatLayout.some(seat => seat.isBooked);
-        console.log('Has booked seats:', hasBookedSeats);
+        // Check if the schedule date is today or in the future
+        const scheduleDate = new Date(schedule.date);
+        scheduleDate.setHours(0, 0, 0, 0);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
 
-        if (hasBookedSeats) {
-            console.log('Deletion blocked - Has booked seats');
-            return res.status(400).json({
-                status: 'fail',
-                message: 'Cannot delete schedule with booked seats'
-            });
+        // If schedule is for today or future date, check for bookings
+        if (scheduleDate >= today) {
+            const hasBookedSeats = schedule.seatLayout.some(seat => seat.isBooked);
+            if (hasBookedSeats) {
+                return res.status(400).json({
+                    status: 'fail',
+                    message: 'Cannot delete schedule with booked seats for today or future dates'
+                });
+            }
         }
 
-        console.log('\n=== Deleting Schedule ===');
+        // If schedule is in the past, we can delete it regardless of bookings
+        if (scheduleDate < today) {
+            // Cache the schedule data in all related bookings
+            await Booking.updateMany(
+                { routeScheduleId: scheduleId },
+                { 
+                    $set: { 
+                        scheduleDeleted: true,
+                        scheduleDeletedAt: new Date(),
+                        cachedScheduleData: {
+                            date: schedule.date,
+                            startTime: schedule.startTime,
+                            totalSeats: schedule.totalSeats,
+                            availableSeats: schedule.availableSeats,
+                            pricePerSeat: schedule.pricePerSeat
+                        }
+                    }
+                }
+            );
+        }
+
+        // Delete the schedule
         await RouteSchedule.findByIdAndDelete(scheduleId);
-        console.log('Schedule deleted successfully');
 
         return res.status(200).json({
             status: 'success',

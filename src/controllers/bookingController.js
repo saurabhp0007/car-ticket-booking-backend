@@ -22,18 +22,18 @@ exports.searchAvailableRoutes = catchAsync(async (req, res) => {
         });
     }
 
-    // Convert the search date to start and end of day for comparison
+    // Get current date and time in UTC
+    const currentDateTime = new Date();
+    const currentTime = currentDateTime.toISOString().split('T')[1].substring(0, 5); // Get current time in HH:mm format
+    
+    // Convert the search date to UTC
     const searchDate = new Date(date);
-    searchDate.setHours(0, 0, 0, 0);
+    searchDate.setUTCHours(0, 0, 0, 0);
     const nextDate = new Date(searchDate);
-    nextDate.setDate(nextDate.getDate() + 1);
+    nextDate.setUTCDate(nextDate.getUTCDate() + 1);
 
-    console.log('Searching for routes between:', {
-        searchDate,
-        nextDate,
-        fromLocation,
-        toLocation
-    });
+    console.log('Current Time:', currentTime);
+    console.log('Current DateTime:', currentDateTime);
 
     // Find routes with available schedules
     const availableRoutes = await Route.aggregate([
@@ -57,7 +57,19 @@ exports.searchAvailableRoutes = catchAsync(async (req, res) => {
                                     { $gte: ['$date', searchDate] },
                                     { $lt: ['$date', nextDate] },
                                     { $gte: ['$availableSeats', passengers] },
-                                    { $eq: ['$status', 'active'] }
+                                    { $eq: ['$status', 'active'] },
+                                    {
+                                        $cond: {
+                                            if: {
+                                                $eq: [
+                                                    { $dateToString: { date: '$date', format: '%Y-%m-%d' } },
+                                                    { $dateToString: { date: currentDateTime, format: '%Y-%m-%d' } }
+                                                ]
+                                            },
+                                            then: { $gt: [{ $toString: '$startTime' }, currentTime] },
+                                            else: true
+                                        }
+                                    }
                                 ]
                             }
                         }
@@ -98,7 +110,8 @@ exports.searchAvailableRoutes = catchAsync(async (req, res) => {
                     date: 1,
                     availableSeats: 1,
                     pricePerSeat: 1,
-                    totalSeats: 1
+                    totalSeats: 1,
+                    seatLayout: 1
                 },
                 totalPrice: {
                     $multiply: ['$schedule.pricePerSeat', passengers]
@@ -107,13 +120,29 @@ exports.searchAvailableRoutes = catchAsync(async (req, res) => {
         }
     ]);
 
-    console.log('Found routes:', availableRoutes);
+    // Additional filter for routes that have passed
+    const filteredRoutes = availableRoutes.filter(route => {
+        const scheduleDate = new Date(route.schedule.date);
+        const scheduleTime = route.schedule.startTime;
+        
+        // If it's a future date, include it
+        if (scheduleDate > currentDateTime) return true;
+        
+        // If it's today, check the time
+        if (scheduleDate.toDateString() === currentDateTime.toDateString()) {
+            return scheduleTime > currentTime;
+        }
+        
+        return false;
+    });
+
+    console.log('Found routes:', filteredRoutes);
 
     res.status(200).json({
         status: 'success',
-        results: availableRoutes.length,
+        results: filteredRoutes.length,
         data: {
-            routes: availableRoutes
+            routes: filteredRoutes
         }
     });
 });
@@ -230,11 +259,16 @@ exports.getMyBookings = catchAsync(async (req, res) => {
         })
         .populate({
             path: 'routeScheduleId',
-            select: 'date startTime totalSeats availableSeats pricePerSeat status'
+            select: 'date startTime totalSeats availableSeats pricePerSeat status',
+            options: { retainNullValues: true }
         })
         .populate({
             path: 'carId',
             select: 'model registrationNumber'
+        })
+        .populate({
+            path: 'passengers',
+            select: 'name age gender contactNumber'
         })
         .lean();
 
@@ -244,19 +278,23 @@ exports.getMyBookings = catchAsync(async (req, res) => {
         userId: booking.userId,
         route: booking.routeId,
         journey: {
-            date: booking.routeScheduleId?.date,
-            startTime: booking.routeScheduleId?.startTime,
-            totalSeats: booking.routeScheduleId?.totalSeats,
-            availableSeats: booking.routeScheduleId?.availableSeats,
-            pricePerSeat: booking.routeScheduleId?.pricePerSeat,
-            status: booking.routeScheduleId?.status
+            date: booking.routeScheduleId?.date || booking.cachedScheduleData?.date,
+            startTime: booking.routeScheduleId?.startTime || booking.cachedScheduleData?.startTime,
+            totalSeats: booking.routeScheduleId?.totalSeats || booking.cachedScheduleData?.totalSeats,
+            availableSeats: booking.routeScheduleId?.availableSeats || booking.cachedScheduleData?.availableSeats,
+            pricePerSeat: booking.routeScheduleId?.pricePerSeat || booking.cachedScheduleData?.pricePerSeat,
+            status: booking.scheduleDeleted ? 'deleted' : (booking.routeScheduleId?.status || 'unknown')
         },
         car: booking.carId,
         passengers: booking.passengers,
         selectedSeats: booking.selectedSeats,
         totalAmount: booking.totalAmount,
         status: booking.status,
-        paymentStatus: booking.paymentStatus
+        paymentStatus: booking.paymentStatus,
+        scheduleStatus: {
+            isDeleted: booking.scheduleDeleted,
+            deletedAt: booking.scheduleDeletedAt
+        }
     }));
 
     res.status(200).json({

@@ -57,6 +57,21 @@ const bookingSchema = new mongoose.Schema({
         type: String,
         enum: ['pending', 'completed', 'failed'],
         default: 'pending'
+    },
+    cachedScheduleData: {
+        date: Date,
+        startTime: String,
+        totalSeats: Number,
+        availableSeats: Number,
+        pricePerSeat: Number
+    },
+    scheduleDeleted: {
+        type: Boolean,
+        default: false
+    },
+    scheduleDeletedAt: {
+        type: Date,
+        default: null
     }
 }, {
     timestamps: true
