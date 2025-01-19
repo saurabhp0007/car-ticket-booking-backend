@@ -215,9 +215,17 @@ class UserController {
       await user.save({ validateBeforeSave: false });
 
       // Create reset URL
-      const resetUrl = `${req.protocol}://${req.get('host')}/api/v1/users/reset-password/${resetToken}`;
+      const resetUrl = `http://localhost:3000/reset-password/${resetToken}`;
 
-      const message = `Forgot your password? Submit a PATCH request with your new password to: ${resetUrl}.\nIf you didn't forget your password, please ignore this email!`;
+      const message = `
+        Forgot your password? Click the link below to reset your password:
+        
+        ${resetUrl}
+        
+        If you didn't request this, please ignore this email.
+        
+        This link will expire in 10 minutes.
+      `;
 
       try {
         await sendEmail({
@@ -313,39 +321,60 @@ class UserController {
   static async requestAdminRole(req, res) {
     try {
       const user = await User.findById(req.user._id);
-      
-      // Send email to superadmin
-      const superAdmin = await User.findOne({ role: 'superadmin' });
-      if (!superAdmin) {
-        return res.status(404).json({
+      const { message } = req.body; // Optional message from the user
+
+      // Check if there's already a pending request
+      if (user.adminRequest && user.adminRequest.status === 'pending') {
+        return res.status(400).json({
           success: false,
-          message: 'Super admin not found'
+          message: 'You already have a pending admin request'
         });
       }
 
-      const message = `
-        User ${user.name} (${user.email}) has requested admin privileges.
-        User ID: ${user._id}
-        
-        To approve this request, make a PUT request to:
-        /api/v1/users/update-role
-        with body:
-        {
-          "userId": "${user._id}",
-          "newRole": "admin",
-          "approved": true
-        }
-      `;
+      // Update user with admin request
+      user.adminRequest = {
+        status: 'pending',
+        requestedAt: new Date(),
+        message: message || 'Request for admin privileges'
+      };
+      await user.save();
 
-      await sendEmail({
-        email: superAdmin.email,
-        subject: 'New Admin Role Request',
-        message
-      });
+      // Send email to superadmin
+      const superAdmin = await User.findOne({ role: 'superadmin' });
+      if (superAdmin) {
+        const emailMessage = `
+          User ${user.name} (${user.email}) has requested admin privileges.
+          User ID: ${user._id}
+          Message: ${message || 'No message provided'}
+          
+          To approve this request, please check the admin dashboard.
+        `;
+
+        await sendEmail({
+          email: superAdmin.email,
+          subject: 'New Admin Role Request',
+          message: emailMessage
+        });
+      }
+
+      // Emit socket event if available
+      const io = req.app.get('io');
+      if (io) {
+        io.emit('adminRequest', {
+          type: 'new',
+          userId: user._id,
+          userName: user.name,
+          status: 'pending'
+        });
+      }
 
       res.json({
         success: true,
-        message: 'Admin role request sent successfully'
+        message: 'Admin role request submitted successfully',
+        data: {
+          requestStatus: 'pending',
+          requestedAt: user.adminRequest.requestedAt
+        }
       });
     } catch (error) {
       res.status(500).json({
@@ -355,6 +384,7 @@ class UserController {
       });
     }
   }
+
   static async updateUserRole(req, res) {
     try {
       const { userId, newRole, approved } = req.body;
@@ -429,65 +459,108 @@ class UserController {
 
   static async requestDriverAssignment(req, res) {
     try {
-      const { email } = req.body;
       
-      // Find user by email
-      const user = await User.findOne({ email });
-      if (!user) {
-        return res.status(404).json({
-          success: false,
-          message: 'User with this email not found'
-        });
-      }
+      const { driverId } = req.body;
+      const adminId = req.user._id; // From auth middleware
 
-      // Check if user is already a driver
-      if (user.role === 'driver') {
+
+      // Validate if driver ID is provided
+      if (!driverId) {
         return res.status(400).json({
           success: false,
-          message: 'User is already a driver'
+          message: 'Please provide a driver ID'
         });
       }
 
-      // Send email to superadmin
-      const superAdmin = await User.findOne({ role: 'superadmin' });
-      if (!superAdmin) {
+      // Check if driver exists and is not already assigned
+      const driver = await User.findById(driverId);
+
+      if (!driver) {
         return res.status(404).json({
           success: false,
-          message: 'Super admin not found'
+          message: 'Driver not found'
         });
       }
 
-      const message = `
-        Admin ${req.user.name} (${req.user.email}) has requested to assign user:
-        
-        Name: ${user.name}
-        Email: ${user.email}
-        User ID: ${user._id}
-        
-        as a driver.
-        
-        To approve this request, make a PUT request to:
-        /api/v1/users/approve-driver with body:
-        {
-          "userId": "${user._id}",
-          "approved": true
-        }
-      `;
+      if (driver.assignedAdmin) {
+        return res.status(400).json({
+          success: false,
+          message: 'Driver is already assigned to an admin'
+        });
+      }
 
-      await sendEmail({
-        email: superAdmin.email,
-        subject: 'Driver Assignment Request',
-        message
+      // Check if user is actually a driver or can become a driver
+      if (driver.role !== 'driver' && driver.role !== 'user') {
+        return res.status(400).json({
+          success: false,
+          message: 'Selected user cannot be assigned as a driver'
+        });
+      }
+
+      // Create or update driver request
+      driver.driverRequest = {
+        status: 'pending',
+        requestedBy: adminId,
+        requestedAt: new Date()
+      };
+      await driver.save();
+
+      // Get socket.io instance if available
+      const io = req.app.get('io');
+      if (io) {
+        io.emit('driverRequest', {
+          type: 'new',
+          driverId: driver._id,
+          adminId: adminId,
+          status: 'pending'
+        });
+      }
+      return res.status(200).json({
+        success: true,
+        message: 'Driver assignment request submitted successfully',
+        data: {
+          driverId: driver._id,
+          status: 'pending',
+          requestedAt: driver.driverRequest.requestedAt
+        }
       });
+
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        message: 'Error processing driver assignment request',
+        error: error.message
+      });
+    }
+  }
+
+  static async getPendingDriverRequests(req, res) {
+    try {
+      const pendingRequests = await User.find({
+        'driverRequest.status': 'pending'
+      })
+      .populate('driverRequest.requestedBy', 'name email')
+      .select('name email driverRequest createdAt');
 
       res.json({
         success: true,
-        message: 'Driver assignment request sent successfully'
+        count: pendingRequests.length,
+        data: pendingRequests.map(user => ({
+          userId: user._id,
+          userName: user.name,
+          userEmail: user.email,
+          requestedBy: {
+            adminId: user.driverRequest.requestedBy._id,
+            adminName: user.driverRequest.requestedBy.name,
+            adminEmail: user.driverRequest.requestedBy.email
+          },
+          requestedAt: user.driverRequest.requestedAt
+        }))
       });
     } catch (error) {
       res.status(500).json({
         success: false,
-        message: 'Error requesting driver assignment',
+        message: 'Error fetching pending driver requests',
         error: error.message
       });
     }
@@ -497,10 +570,11 @@ class UserController {
     try {
       const { userId, approved, adminId } = req.body;
 
-      if (!approved) {
-        return res.status(400).json({
+      const user = await User.findById(userId);
+      if (!user || user.driverRequest?.status !== 'pending') {
+        return res.status(404).json({
           success: false,
-          message: 'Approval is required'
+          message: 'No pending driver request found'
         });
       }
 
@@ -513,31 +587,49 @@ class UserController {
         });
       }
 
-      const user = await User.findByIdAndUpdate(
-        userId,
-        { 
-          role: 'driver',
-          assignedAdmin: adminId 
-        },
-        { new: true }
-      ).select('-password');
+      if (approved) {
+        // Approve the request
+        user.role = 'driver';
+        user.assignedAdmin = adminId;
+        user.driverRequest.status = 'approved';
+      } else {
+        // Reject the request
+        user.driverRequest.status = 'rejected';
+      }
 
-      if (!user) {
-        return res.status(404).json({
-          success: false,
-          message: 'User not found'
-        });
+      await user.save();
+
+      // Get socket.io instance
+      const io = req.app.get('io');
+      
+      if (approved) {
+        // Notify the admin and user through socket
+        const eventData = {
+          userId: user._id.toString(),
+          adminId: adminId.toString(),
+          message: `Driver request for ${user.name} has been approved`,
+          timestamp: new Date().toISOString()
+        };
+        
+        io?.emit('driverRequestApproved', eventData);
       }
 
       res.json({
         success: true,
-        message: 'User assigned as driver successfully',
-        user
+        message: approved ? 'Driver request approved successfully' : 'Driver request rejected',
+        user: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          assignedAdmin: user.assignedAdmin,
+          requestStatus: user.driverRequest.status
+        }
       });
     } catch (error) {
       res.status(500).json({
         success: false,
-        message: 'Error approving driver assignment',
+        message: 'Error processing driver request',
         error: error.message
       });
     }
@@ -587,6 +679,261 @@ class UserController {
       res.status(500).json({
         success: false,
         message: 'Error disqualifying driver',
+        error: error.message
+      });
+    }
+  }
+
+  static async getAllAdmins(req, res) {
+    try {
+      const admins = await User.find({ role: 'admin' })
+        .select('name email phone createdAt')
+        .lean();
+
+      const adminsWithDriverCount = await Promise.all(
+        admins.map(async (admin) => {
+          const driverCount = await User.countDocuments({
+            role: 'driver',
+            assignedAdmin: admin._id
+          });
+          return { ...admin, driverCount };
+        })
+      );
+
+      res.status(200).json({
+        success: true,
+        count: admins.length,
+        data: adminsWithDriverCount
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: 'Error fetching admins',
+        error: error.message
+      });
+    }
+  }
+
+  static async disqualifyAdmin(req, res) {
+    try {
+      const { adminId } = req.body;
+
+      // Find the admin
+      const admin = await User.findOne({
+        _id: adminId,
+        role: 'admin'
+      });
+
+      if (!admin) {
+        return res.status(404).json({
+          success: false,
+          message: 'Admin not found'
+        });
+      }
+
+      // Find all drivers assigned to this admin
+      const assignedDrivers = await User.find({
+        role: 'driver',
+        assignedAdmin: adminId
+      });
+
+      // Update all assigned drivers to regular users
+      await User.updateMany(
+        { assignedAdmin: adminId },
+        { 
+          $set: { role: 'user' },
+          $unset: { assignedAdmin: "" }
+        }
+      );
+
+      // Change admin to regular user
+      admin.role = 'user';
+      await admin.save();
+
+      // Get socket.io instance
+      const io = req.app.get('io');
+      
+      // Notify the admin and all affected drivers
+      const eventData = {
+        adminId: admin._id.toString(),
+        message: 'You have been disqualified as an admin',
+        timestamp: new Date().toISOString()
+      };
+      
+      io?.emit('adminDisqualified', eventData);
+
+      // Notify each affected driver
+      assignedDrivers.forEach(driver => {
+        io?.emit('driverDisqualified', {
+          userId: driver._id.toString(),
+          message: 'You have been disqualified as a driver due to admin disqualification',
+          timestamp: new Date().toISOString()
+        });
+      });
+
+      res.status(200).json({
+        success: true,
+        message: 'Admin and associated drivers have been disqualified successfully',
+        data: {
+          admin: {
+            id: admin._id,
+            name: admin.name,
+            email: admin.email
+          },
+          affectedDriversCount: assignedDrivers.length
+        }
+      });
+
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: 'Error disqualifying admin',
+        error: error.message
+      });
+    }
+  }
+
+  static async searchUsers(req, res) {
+    try {
+
+      const { email } = req.query;
+
+      if (!email) {
+        return res.status(400).json({
+          success: false,
+          message: 'Please provide an email to search'
+        });
+      }
+
+      // First, let's try to find the user with just the email
+      const simpleQuery = { email: { $regex: email, $options: 'i' } };
+      
+      const allUsers = await User.find(simpleQuery).lean();
+
+      // Now let's add role condition
+      const queryWithRole = {
+        email: { $regex: email, $options: 'i' },
+        role: { $in: ['user', null] }  // Include users with role 'user' or no role
+      };
+      
+      const users = await User.find(queryWithRole)
+        .select('name email phone role createdAt')
+        .lean();
+
+      res.status(200).json({
+        success: true,
+        count: users.length,
+        data: users.map(user => ({
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          phone: user.phone,
+          role: user.role,
+          createdAt: user.createdAt
+        }))
+      });
+
+    } catch (error) {
+      console.error('Error in searchUsers:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Error searching users',
+        error: error.message
+      });
+    }
+  }
+
+  static async getPendingAdminRequests(req, res) {
+    try {
+      const pendingRequests = await User.find({
+        'adminRequest.status': 'pending'
+      }).select('name email adminRequest createdAt');
+
+      res.json({
+        success: true,
+        count: pendingRequests.length,
+        data: pendingRequests.map(user => ({
+          userId: user._id,
+          userName: user.name,
+          userEmail: user.email,
+          requestDetails: {
+            message: user.adminRequest.message,
+            requestedAt: user.adminRequest.requestedAt
+          }
+        }))
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: 'Error fetching pending admin requests',
+        error: error.message
+      });
+    }
+  }
+
+  static async approveAdminRequest(req, res) {
+    try {
+      const { userId, status, message } = req.body;
+
+      if (!userId || !status || !['approved', 'rejected'].includes(status)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Please provide valid userId and status (approved/rejected)'
+        });
+      }
+
+      const user = await User.findById(userId);
+
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: 'User not found'
+        });
+      }
+
+      if (!user.adminRequest || user.adminRequest.status !== 'pending') {
+        return res.status(400).json({
+          success: false,
+          message: 'No pending admin request found for this user'
+        });
+      }
+
+      // Update user's admin request status
+      user.adminRequest.status = status;
+      
+      // If approved, update user role to admin
+      if (status === 'approved') {
+        user.role = 'admin';
+      }
+
+      await user.save();
+
+      // Emit socket event if available
+      const io = req.app.get('io');
+      if (io) {
+        const socketId = req.app.get('connectedUsers').get(userId.toString());
+        if (socketId) {
+          io.to(socketId).emit('adminRequestUpdate', {
+            status,
+            message: message || `Your admin request has been ${status}`
+          });
+        }
+      }
+
+      res.json({
+        success: true,
+        message: `Admin request ${status} successfully`,
+        data: {
+          userId: user._id,
+          status: user.adminRequest.status,
+          role: user.role
+        }
+      });
+
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: 'Error processing admin request',
         error: error.message
       });
     }

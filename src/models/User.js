@@ -43,7 +43,28 @@ const UserSchema = new mongoose.Schema({
     default: true
   },
   passwordResetToken: String,
-  passwordResetExpires: Date
+  passwordResetExpires: Date,
+  driverRequest: {
+    status: {
+      type: String,
+      enum: ['pending', 'approved', 'rejected', null],
+      default: null
+    },
+    requestedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    requestedAt: Date
+  },
+  adminRequest: {
+    status: {
+      type: String,
+      enum: ['pending', 'approved', 'rejected', null],
+      default: null
+    },
+    requestedAt: Date,
+    message: String
+  }
 }, { 
   timestamps: true 
 });

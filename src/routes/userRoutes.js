@@ -38,7 +38,10 @@ router.get('/drivers',
 );
 
 // Route for requesting admin role
-router.post('/request-admin-role', authMiddleware, UserController.requestAdminRole);
+router.post('/request-admin-role', 
+  authMiddleware, 
+  UserController.requestAdminRole
+);
 
 // Route for admin to request driver assignment
 router.post('/request-driver-assignment',
@@ -59,6 +62,55 @@ router.post('/disqualify-driver',
   authMiddleware,
   roleMiddleware(['admin']),
   UserController.disqualifyDriver
+);
+
+// Route for getting pending driver requests (superadmin only)
+router.get('/pending-driver-requests',
+  authMiddleware,
+  roleMiddleware(['superadmin']),
+  UserController.getPendingDriverRequests
+);
+
+// Route for approving/rejecting driver requests (superadmin only)
+router.post('/approve-driver-request',
+  authMiddleware,
+  roleMiddleware(['superadmin']),
+  UserController.approveDriverAssignment
+);
+
+// Route for getting all admins (superadmin only)
+router.get('/admins',
+  authMiddleware,
+  roleMiddleware(['superadmin']),
+  UserController.getAllAdmins
+);
+
+// Route for disqualifying admin (superadmin only)
+router.post('/disqualify-admin',
+  authMiddleware,
+  roleMiddleware(['superadmin']),
+  UserController.disqualifyAdmin
+);
+
+// Route for searching users by email (admin only)
+router.get('/search', 
+  authMiddleware, 
+  roleMiddleware(['admin', 'superadmin']), 
+  UserController.searchUsers
+);
+
+// Route for getting pending admin requests (superadmin only)
+router.get('/pending-admin-requests',
+  authMiddleware,
+  roleMiddleware(['superadmin']),
+  UserController.getPendingAdminRequests
+);
+
+// Route for approving/rejecting admin requests (superadmin only)
+router.post('/approve-admin-request',
+  authMiddleware,
+  roleMiddleware(['superadmin']),
+  UserController.approveAdminRequest
 );
 
 module.exports = router;
