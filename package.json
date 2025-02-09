@@ -14,10 +14,14 @@
     "dotenv": "^10.0.0",
     "express": "^4.17.1",
     "jsonwebtoken": "^8.5.1",
+    "moment": "^2.30.1",
     "mongoose": "^6.0.12",
     "nodemailer": "^6.9.16",
     "openrouteservice-js": "^0.4.1",
-    "socket.io": "^4.8.1"
+    "razorpay": "^2.9.5",
+    "socket.io": "^4.8.1",
+    "twilio": "^5.4.3",
+    "whatsapp-web.js": "^1.26.0"
   },
   "devDependencies": {
     "nodemon": "^2.0.14"

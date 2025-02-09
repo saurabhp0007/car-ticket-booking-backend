@@ -72,6 +72,24 @@ const bookingSchema = new mongoose.Schema({
     scheduleDeletedAt: {
         type: Date,
         default: null
+    },
+    paymentDetails: {
+        advanceAmount: {
+            type: Number,
+            default: 0
+        },
+        remainingAmount: {
+            type: Number,
+            default: 0
+        },
+        totalAmount: {
+            type: Number,
+            required: true
+        },
+        paymentDate: {
+            type: Date
+        },
+        // Other Razorpay payment details will be stored here
     }
 }, {
     timestamps: true

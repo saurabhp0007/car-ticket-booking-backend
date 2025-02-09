@@ -14,7 +14,7 @@ router.patch('/reset-password/:token', UserController.resetPassword);
 router.get('/all', 
   authMiddleware, 
   roleMiddleware(['superadmin']), 
-  UserController.getAllUsers  // SuperAdmin can see all users
+  UserController.getAllUsers
 );
 
 router.patch('/assign-role', 
@@ -34,7 +34,7 @@ router.put('/update-role',
 router.get('/drivers', 
   authMiddleware, 
   roleMiddleware(['admin']), 
-  UserController.getAssignedDrivers  // Admin can see only their drivers
+  UserController.getAssignedDrivers 
 );
 
 // Route for requesting admin role

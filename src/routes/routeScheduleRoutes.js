@@ -9,6 +9,7 @@ router.use(authMiddleware);
 
 // Routes
 router.post('/', routeScheduleController.createRouteSchedule);
+router.get('/all-schedules', routeScheduleController.getAllRouteSchedules);
 router.get('/', routeScheduleController.getRouteSchedules);
 router.get('/:routeScheduleId/seats', routeScheduleController.getAvailableSeats);
 router.patch('/:id', routeScheduleController.updateRouteSchedule);

@@ -15,6 +15,9 @@ router.post('/search', bookingController.searchAvailableRoutes);
 router.post('/', bookingController.createBooking);
 router.get('/my-bookings', bookingController.getMyBookings);
 
+// Add the new route for confirming payment
+router.post('/confirm', bookingController.confirmPayment);
+
 // Admin Routes (requires admin role)
 router.get('/admin/bookings', 
     authMiddleware, 
@@ -27,5 +30,18 @@ router.get('/admin/bookings/:id',
     roleMiddleware(['admin']), 
     bookingController.getBookingDetail
 );
+
+// Protect all routes and ensure only drivers can access
+router.use(roleMiddleware(['driver']));
+
+// Example route definition
+router.get('/driver-schedules', bookingController.getDriverRouteSchedules);
+
+// Define the route for fetching bookings with travel date
+router.get('/bookings-with-travel-date', bookingController.getDriverBookingsWithTravelDate);
+
+// Ensure all routes have valid callback functions
+// Add other routes as needed
+// router.get('/another-route', bookingController.anotherFunction);
 
 module.exports = router;

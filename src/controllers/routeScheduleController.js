@@ -313,4 +313,57 @@ exports.getRouteScheduleById = catchAsync(async (req, res) => {
             routeSchedule
         }
     });
+});
+
+exports.getAllRouteSchedules = catchAsync(async (req, res) => {
+    const { date } = req.query;
+
+    // Get today's date at start of day
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // Build query object
+    const query = { 
+        status: 'active',
+        date: { $gte: today }
+    };
+    if (date) {
+        const queryDate = new Date(date);
+        queryDate.setHours(0, 0, 0, 0);
+        const nextDay = new Date(queryDate);
+        nextDay.setDate(nextDay.getDate() + 1);
+        
+        query.date = {
+            $gte: queryDate,
+            $lt: nextDay
+        };
+    }
+
+    const routeSchedules = await RouteSchedule.find(query)
+        .populate({
+            path: 'routeId',
+            select: 'name startLocation endLocation'
+        })
+        .sort({ date: 1, startTime: 1 });
+    
+    if (routeSchedules.length === 0) {
+        console.log('No schedules found. Checking if RouteSchedule collection has any documents...');
+        const totalDocs = await RouteSchedule.countDocuments({});
+        console.log('Total documents in RouteSchedule collection:', totalDocs);
+        
+        return res.status(404).json({
+            status: 'fail',
+            message: 'No schedules found'
+        });
+    }
+
+    const response = {
+        status: 'success',
+        results: routeSchedules.length,
+        data: {
+            routeSchedules
+        }
+    };
+
+    res.status(200).json(response);
 }); 
