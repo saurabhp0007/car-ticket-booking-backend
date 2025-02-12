@@ -3,18 +3,20 @@ const catchAsync = require('../utils/catchAsync');
 const Booking = require('../models/Booking');
 
 exports.createRouteSchedule = catchAsync(async (req, res) => {
+
     const {
         routeId,
         dates,
         totalSeats,
-        pricePerSeat
+        pricePerSeat,
+        carId
     } = req.body;
 
     // Validate input
-    if (!routeId || !dates || !Array.isArray(dates) || !totalSeats || !pricePerSeat) {
+    if (!routeId || !dates || !Array.isArray(dates) || !totalSeats || !pricePerSeat || !carId) {
         return res.status(400).json({
             status: 'fail',
-            message: 'Please provide routeId, dates array (with date and startTime), totalSeats, and pricePerSeat'
+            message: 'Please provide routeId, carId, dates array (with date and startTime), totalSeats, and pricePerSeat'
         });
     }
 
@@ -30,20 +32,25 @@ exports.createRouteSchedule = catchAsync(async (req, res) => {
     // Check for existing schedules on the same date
     for (const dateObj of dates) {
         const checkDate = new Date(dateObj.date);
-        // Set time to start of day for date-only comparison
         checkDate.setHours(0, 0, 0, 0);
 
-        const existingSchedule = await RouteSchedule.findOne({
+        const query = {
             date: {
                 $gte: checkDate,
                 $lt: new Date(checkDate.getTime() + 24 * 60 * 60 * 1000)
-            }
-        });
+            },
+            carId: carId,
+            startTime: dateObj.startTime
+        };
 
+
+        const existingSchedule = await RouteSchedule.findOne(query);
+        
         if (existingSchedule) {
+            
             return res.status(400).json({
                 status: 'fail',
-                message: `A schedule already exists for date ${dateObj.date}`
+                message: `A schedule already exists for date ${dateObj.date} at ${dateObj.startTime} with car ID ${carId}`
             });
         }
     }
@@ -59,6 +66,7 @@ exports.createRouteSchedule = catchAsync(async (req, res) => {
         dates.map(async (dateObj) => {
             return RouteSchedule.create({
                 routeId,
+                carId,
                 date: new Date(dateObj.date),
                 startTime: dateObj.startTime,
                 totalSeats,
@@ -94,7 +102,6 @@ exports.getRouteSchedules = catchAsync(async (req, res) => {
     const query = { routeId };
     if (date) query.date = new Date(date);
 
-    console.log('Querying route schedules with:', query); // Debugging line
 
     const routeSchedules = await RouteSchedule.find(query)
         .populate({
@@ -102,14 +109,6 @@ exports.getRouteSchedules = catchAsync(async (req, res) => {
             select: 'name startLocation endLocation'
         })
         .sort({ date: 1 });
-
-    if (!routeSchedules.length) {
-        console.log('No schedules found for query:', query);
-        return res.status(404).json({
-            status: 'fail',
-            message: 'No schedules found for this route'
-        });
-    }
 
     res.status(200).json({
         status: 'success',
@@ -185,19 +184,9 @@ exports.updateRouteSchedule = catchAsync(async (req, res) => {
 
 exports.deleteRouteSchedule = catchAsync(async (req, res) => {
     try {
-        console.log('\n=== Delete Route Schedule Request ===');
-        console.log('Headers:', req.headers);
-        console.log('URL:', req.url);
-        console.log('Method:', req.method);
-        console.log('Query Parameters:', req.query);
-        console.log('Route Parameters:', req.params);
 
         const scheduleId = req.params.routeId || req.params.scheduleId;
         const { date } = req.query;
-
-        console.log('\n=== Processing Parameters ===');
-        console.log('Extracted scheduleId:', scheduleId);
-        console.log('Extracted date:', date);
 
         if (!scheduleId || !date) {
             return res.status(400).json({
@@ -347,9 +336,7 @@ exports.getAllRouteSchedules = catchAsync(async (req, res) => {
         .sort({ date: 1, startTime: 1 });
     
     if (routeSchedules.length === 0) {
-        console.log('No schedules found. Checking if RouteSchedule collection has any documents...');
         const totalDocs = await RouteSchedule.countDocuments({});
-        console.log('Total documents in RouteSchedule collection:', totalDocs);
         
         return res.status(404).json({
             status: 'fail',
