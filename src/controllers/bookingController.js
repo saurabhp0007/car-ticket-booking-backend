@@ -54,6 +54,142 @@ const sendWhatsAppMessage = async (to, message) => {
     }
 };
 
+// Helper function to calculate distance and proportional price between points
+const calculateDistanceAndPrice = async (points, totalRoutePoints, originalPrice) => {
+    try {
+        // Ensure coordinates are in the correct format [longitude, latitude]
+        const fullRouteCoordinates = await Promise.all(totalRoutePoints.map(async point => {
+            // Always geocode to get fresh coordinates
+            const geocodeRequest = {
+                text: point.address,
+                boundary_country: ['IND']
+            };
+            const geocodeResponse = await orsGeocoding.geocode(geocodeRequest);
+            return geocodeResponse.features[0].geometry.coordinates;
+        }));
+
+        const segmentCoordinates = await Promise.all(points.map(async point => {
+            // Always geocode to get fresh coordinates
+            const geocodeRequest = {
+                text: point.address,
+                boundary_country: ['IND']
+            };
+            const geocodeResponse = await orsGeocoding.geocode(geocodeRequest);
+            return geocodeResponse.features[0].geometry.coordinates;
+        }));
+
+        console.log('Full Route Coordinates:', fullRouteCoordinates);
+        console.log('Segment Coordinates:', segmentCoordinates);
+        
+        // Get full route distance
+        const fullRouteRequest = {
+            coordinates: fullRouteCoordinates,
+            profile: 'driving-car',
+            format: 'json'
+        };
+        const fullRouteResponse = await orsDirections.calculate(fullRouteRequest);
+        const fullDistance = fullRouteResponse.routes[0].summary.distance / 1000;
+
+        // Get segment distance
+        const segmentRequest = {
+            coordinates: segmentCoordinates,
+            profile: 'driving-car',
+            format: 'json'
+        };
+        const segmentResponse = await orsDirections.calculate(segmentRequest);
+        const segmentDistance = segmentResponse.routes[0].summary.distance / 1000;
+
+        // Calculate proportional price
+        const priceRatio = segmentDistance / fullDistance;
+        const segmentPrice = Math.ceil(originalPrice * priceRatio);
+        
+        console.log('Distance Calculation:', {
+            fullDistance,
+            segmentDistance,
+            priceRatio,
+            originalPrice,
+            segmentPrice
+        });
+
+        return {
+            fullDistance,
+            segmentDistance,
+            price: segmentPrice,
+            priceRatio
+        };
+    } catch (error) {
+        console.error('Error calculating distance:', error);
+        console.error('Error details:', {
+            message: error.message,
+            points: points,
+            totalRoutePoints: totalRoutePoints
+        });
+
+        // Fallback calculation with coordinate validation
+        try {
+            // Validate and get coordinates with fallback geocoding
+            const getValidCoordinates = async (point) => {
+                if (point.coordinates && 
+                    point.coordinates[0] > 68 && point.coordinates[0] < 98 && // India longitude range
+                    point.coordinates[1] > 8 && point.coordinates[1] < 38    // India latitude range
+                ) {
+                    return point.coordinates;
+                }
+                const geocodeResponse = await orsGeocoding.geocode({
+                    text: point.address,
+                    boundary_country: ['IND']
+                });
+                return geocodeResponse.features[0].geometry.coordinates;
+            };
+
+            // Get validated coordinates
+            const validatedTotalPoints = await Promise.all(totalRoutePoints.map(getValidCoordinates));
+            const validatedSegmentPoints = await Promise.all(points.map(getValidCoordinates));
+
+            // Haversine formula with accurate Earth radius
+            const getDistance = (coord1, coord2) => {
+                const R = 6371; // Earth radius in km
+                const dLat = (coord2[1] - coord1[1]) * Math.PI / 180;
+                const dLon = (coord2[0] - coord1[0]) * Math.PI / 180;
+                const a = 
+                    Math.sin(dLat/2) * Math.sin(dLat/2) +
+                    Math.cos(coord1[1] * Math.PI / 180) * 
+                    Math.cos(coord2[1] * Math.PI / 180) * 
+                    Math.sin(dLon/2) * Math.sin(dLon/2);
+                return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            };
+
+            // Calculate distances
+            const fullDistance = validatedTotalPoints.slice(1).reduce((acc, _, i) => 
+                acc + getDistance(validatedTotalPoints[i], validatedTotalPoints[i+1]), 0);
+
+            const segmentDistance = validatedSegmentPoints.slice(1).reduce((acc, _, i) => 
+                acc + getDistance(validatedSegmentPoints[i], validatedSegmentPoints[i+1]), 0);
+
+            const priceRatio = segmentDistance / fullDistance;
+            const segmentPrice = Math.ceil(originalPrice * priceRatio);
+
+            console.log('Accurate Fallback Calculation:', {
+                fullDistance: fullDistance.toFixed(2),
+                segmentDistance: segmentDistance.toFixed(2),
+                priceRatio: priceRatio.toFixed(4),
+                originalPrice,
+                segmentPrice
+            });
+
+            return {
+                fullDistance,
+                segmentDistance,
+                price: segmentPrice,
+                priceRatio
+            };
+        } catch (fallbackError) {
+            console.error('Fallback calculation failed:', fallbackError);
+            return null;
+        }
+    }
+};
+
 exports.searchAvailableRoutes = catchAsync(async (req, res) => {
     const { fromLocation, toLocation, date, passengers = 1 } = req.body;
 
@@ -74,19 +210,47 @@ exports.searchAvailableRoutes = catchAsync(async (req, res) => {
 
     // Get current date and time in UTC
     const currentDateTime = new Date();
-    const currentTime = currentDateTime.toISOString().split('T')[1].substring(0, 5); // Get current time in HH:mm format
+    const currentTime = currentDateTime.toISOString().split('T')[1].substring(0, 5);
 
-    // Find routes with available schedules
+    // Find routes with available schedules, including waypoint matches
     const availableRoutes = await Route.aggregate([
         {
             $match: {
-                'startLocation.address': fromLocation,
-                'endLocation.address': toLocation,
-                status: 'active'
+                $and: [
+                    {
+                        $or: [
+                            // Direct route matches
+                            {
+                                'startLocation.address': fromLocation,
+                                'endLocation.address': toLocation
+                            },
+                            // Waypoint matches for start location
+                            {
+                                $and: [
+                                    { 'waypoints.address': fromLocation },
+                                    { 'endLocation.address': toLocation }
+                                ]
+                            },
+                            // Waypoint matches for end location
+                            {
+                                $and: [
+                                    { 'startLocation.address': fromLocation },
+                                    { 'waypoints.address': toLocation }
+                                ]
+                            },
+                            // Both locations in waypoints
+                            {
+                                $and: [
+                                    { 'waypoints.address': fromLocation },
+                                    { 'waypoints.address': toLocation }
+                                ]
+                            }
+                        ]
+                    },
+                    { status: 'active' }
+                ]
             }
         },
-        // Log the matched routes
-        { $addFields: { matchedRoutes: true } },
         {
             $lookup: {
                 from: 'routeschedules',
@@ -109,8 +273,6 @@ exports.searchAvailableRoutes = catchAsync(async (req, res) => {
                 as: 'schedule'
             }
         },
-        // Log the routes with schedules
-        { $addFields: { routesWithSchedules: true } },
         {
             $unwind: {
                 path: '$schedule',
@@ -129,10 +291,34 @@ exports.searchAvailableRoutes = catchAsync(async (req, res) => {
             $unwind: '$car'
         },
         {
+            $addFields: {
+                isDirectRoute: {
+                    $and: [
+                        { $eq: ['$startLocation.address', fromLocation] },
+                        { $eq: ['$endLocation.address', toLocation] }
+                    ]
+                },
+                routeType: {
+                    $cond: {
+                        if: {
+                            $and: [
+                                { $eq: ['$startLocation.address', fromLocation] },
+                                { $eq: ['$endLocation.address', toLocation] }
+                            ]
+                        },
+                        then: 'direct',
+                        else: 'via-waypoint'
+                    }
+                }
+            }
+        },
+        {
             $project: {
                 name: 1,
                 startLocation: 1,
                 endLocation: 1,
+                waypoints: 1,
+                routeType: 1,
                 car: {
                     _id: 1,
                     model: 1,
@@ -148,36 +334,152 @@ exports.searchAvailableRoutes = catchAsync(async (req, res) => {
                 },
                 totalPrice: {
                     $multiply: ['$schedule.pricePerSeat', passengers]
+                },
+                // Add relevant waypoints for the journey
+                relevantWaypoints: {
+                    $filter: {
+                        input: '$waypoints',
+                        as: 'waypoint',
+                        cond: {
+                            $or: [
+                                { $eq: ['$$waypoint.address', fromLocation] },
+                                { $eq: ['$$waypoint.address', toLocation] }
+                            ]
+                        }
+                    }
                 }
+            }
+        },
+        {
+            $sort: { 
+                isDirectRoute: -1,  // Direct routes first
+                totalPrice: 1       // Then by price
             }
         }
     ]);
-
-    console.log('Available Routes:', availableRoutes);
 
     // Additional filter for routes that have passed
     const filteredRoutes = availableRoutes.filter(route => {
         const scheduleDate = new Date(route.schedule.date);
         const scheduleTime = route.schedule.startTime;
         
-        // If it's a future date, include it
         if (scheduleDate > currentDateTime) return true;
-        
-        // If it's today, check the time
         if (scheduleDate.toDateString() === currentDateTime.toDateString()) {
             return scheduleTime > currentTime;
         }
-        
         return false;
     });
 
     console.log('Found routes:', filteredRoutes);
 
+    // Calculate actual prices based on route segments
+    const routesWithAdjustedPrices = await Promise.all(filteredRoutes.map(async route => {
+        let points = [];
+        let segmentDescription = [];
+        const originalPrice = route.schedule.pricePerSeat;
+
+        if (route.routeType === 'direct') {
+            points = [route.startLocation, route.endLocation];
+            const routeCalculation = await calculateDistanceAndPrice(
+                points,
+                points,
+                originalPrice
+            );
+
+            return {
+                ...route,
+                distanceDetails: {
+                    segmentType: 'direct',
+                    fullDistance: routeCalculation?.fullDistance,
+                    segmentDistance: routeCalculation?.segmentDistance,
+                    originalPrice,
+                    adjustedPrice: originalPrice
+                }
+            };
+        } else {
+            // For routes via waypoints, calculate proportional price
+            const allPoints = [
+                route.startLocation,
+                ...route.waypoints,
+                route.endLocation
+            ];
+
+            // Find indices of fromLocation and toLocation in the route
+            const fromIndex = allPoints.findIndex(p => p.address === fromLocation);
+            const toIndex = allPoints.findIndex(p => p.address === toLocation);
+
+            if (fromIndex === -1 || toIndex === -1) {
+                console.error('Location not found in route points');
+                return route;
+            }
+
+            // Extract relevant segment of the route
+            points = allPoints.slice(
+                Math.min(fromIndex, toIndex),
+                Math.max(fromIndex, toIndex) + 1
+            );
+
+            // Create description of segments
+            segmentDescription = points.map((point, idx) => {
+                if (idx === points.length - 1) return null;
+                return `${point.address} to ${points[idx + 1].address}`;
+            }).filter(Boolean);
+
+            console.log('Route Segments:', {
+                fromIndex,
+                toIndex,
+                points,
+                segmentDescription
+            });
+
+            // Calculate proportional price for the segment
+            const routeCalculation = await calculateDistanceAndPrice(
+                points,
+                allPoints,
+                originalPrice
+            );
+
+            if (!routeCalculation) {
+                return {
+                    ...route,
+                    distanceDetails: {
+                        segmentType: 'waypoint',
+                        error: 'Could not calculate distance',
+                        originalPrice,
+                        segments: segmentDescription
+                    }
+                };
+            }
+
+            const adjustedPricePerSeat = routeCalculation.price;
+
+            return {
+                ...route,
+                schedule: {
+                    ...route.schedule,
+                    pricePerSeat: adjustedPricePerSeat
+                },
+                totalPrice: adjustedPricePerSeat * passengers,
+                distanceDetails: {
+                    segmentType: 'waypoint',
+                    fullRouteDistance: routeCalculation.fullDistance,
+                    segmentDistance: routeCalculation.segmentDistance,
+                    segments: segmentDescription,
+                    originalPrice,
+                    adjustedPrice: adjustedPricePerSeat,
+                    priceRatio: routeCalculation.priceRatio
+                }
+            };
+        }
+    }));
+
+    console.log('Found routes with adjusted prices:', routesWithAdjustedPrices);
+
     res.status(200).json({
         status: 'success',
-        results: filteredRoutes.length,
+        results: routesWithAdjustedPrices.length,
         data: {
-            routes: filteredRoutes
+            routes: routesWithAdjustedPrices
         }
     });
 });
