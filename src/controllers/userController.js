@@ -7,13 +7,40 @@ class UserController {
   static async signup(req, res) {
     try {
       const { name, email, password, phone, role } = req.body;
-
-      // Check if user already exists
-      const existingUser = await User.findOne({ email });
-      if (existingUser) {
+      
+      // Validate required fields
+      const validationErrors = {};
+      
+      if (!name || name.trim() === '') {
+        validationErrors.name = 'Name is required';
+      }
+      
+      if (!email) {
+        validationErrors.email = 'Email is required';
+      } else {
+        // Check if email is already registered
+        const existingEmail = await User.findOne({ email });
+        if (existingEmail) {
+          validationErrors.email = 'Email is already registered';
+        }
+      }
+      
+      if (!password) {
+        validationErrors.password = 'Password is required';
+      } else if (password.length < 6) {
+        validationErrors.password = 'Password must be at least 6 characters';
+      }
+      
+      if (!phone) {
+        validationErrors.phone = 'Phone number is required';
+      }
+      
+      // If validation errors exist, return them
+      if (Object.keys(validationErrors).length > 0) {
         return res.status(400).json({
           success: false,
-          message: 'User already exists'
+          message: 'Validation failed',
+          errors: validationErrors
         });
       }
 
