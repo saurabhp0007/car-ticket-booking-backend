@@ -242,7 +242,7 @@ class UserController {
       await user.save({ validateBeforeSave: false });
 
       // Create reset URL
-      const resetUrl = `http://localhost:3000/reset-password/${resetToken}`;
+      const resetUrl = `https://car-reset-password.vercel.app/reset-password/${resetToken}`;
 
       const message = `
         Forgot your password? Click the link below to reset your password:
