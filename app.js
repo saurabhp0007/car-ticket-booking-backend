@@ -21,15 +21,10 @@ app.use(express.urlencoded({ extended: true }));
 
 // Enable CORS
 app.use(cors({
-  origin: [
-    'https://www.subhamyaatravels.com',
-    'https://subhamyaatravels.com',
-    'https://car-reset-password-7bjmo96yi-saurabhs-projects-2660e0f6.vercel.app'
-  ],
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+  origin: "*",
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
   credentials: true
 }));
-
 
 // Initialize Socket.IO with CORS options
 const io = socketIO(server, {
