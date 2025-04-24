@@ -50,12 +50,12 @@ const bookingSchema = new mongoose.Schema({
     },
     status: {
         type: String,
-        enum: ['pending', 'confirmed', 'cancelled'],
-        default: 'confirmed'
+        enum: ['pending', 'confirmed', 'cancelled', 'abandoned', 'expired'],
+        default: 'pending'
     },
     paymentStatus: {
         type: String,
-        enum: ['pending', 'completed', 'failed'],
+        enum: ['pending', 'partially_paid', 'completed', 'failed'],
         default: 'pending'
     },
     cachedScheduleData: {
@@ -70,6 +70,23 @@ const bookingSchema = new mongoose.Schema({
         default: false
     },
     scheduleDeletedAt: {
+        type: Date,
+        default: null
+    },
+    // Razorpay payment fields
+    razorpayPaymentId: {
+        type: String,
+        default: null
+    },
+    razorpayOrderId: {
+        type: String,
+        default: null
+    },
+    razorpaySignature: {
+        type: String,
+        default: null
+    },
+    paymentTimeout: {
         type: Date,
         default: null
     },

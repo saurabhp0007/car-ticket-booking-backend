@@ -13,10 +13,8 @@ router.post('/search', bookingController.searchAvailableRoutes);
 
 // Protected routes (auth required)
 router.post('/', bookingController.createBooking);
-router.get('/my-bookings', bookingController.getMyBookings);
-
-// Add the new route for confirming payment
 router.post('/confirm', bookingController.confirmPayment);
+router.get('/my-bookings', bookingController.getMyBookings);
 
 // Admin Routes (requires admin role)
 router.get('/admin/bookings', 
