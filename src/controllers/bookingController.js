@@ -772,7 +772,7 @@ exports.createBooking = catchAsync(async (req, res) => {
         // Create Razorpay order for advance payment (40% of total)
         try {
             // For testing/development - use minimal amount of 1 rupee
-            const testMode = false; // Set to false in production
+            const testMode = true; // Change this to true for ₹1 payments
             const orderAmount = testMode ? 100 : advanceAmount * 100; // 1 rupee (100 paise) for testing, or real amount
             
             const order = await razorpay.orders.create({
@@ -1021,7 +1021,7 @@ exports.confirmPayment = catchAsync(async (req, res) => {
         }
 
         let advanceAmount = payment.amount / 100;
-        let isTestMode = true;
+        let isTestMode = false; // Will be updated based on order notes
 
         try {
             if (order.notes && order.notes.testMode === 'true') {
