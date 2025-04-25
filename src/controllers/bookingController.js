@@ -1020,21 +1020,17 @@ exports.confirmPayment = catchAsync(async (req, res) => {
             });
         }
 
-        // Calculate payment details
-        let advanceAmount = payment.amount / 100;  // Default to actual payment amount
-        let isTestMode = false;
+        let advanceAmount = payment.amount / 100;
+        let isTestMode = true;
 
-        // Check if this was a test payment with a dummy amount
         try {
             if (order.notes && order.notes.testMode === 'true') {
                 isTestMode = true;
-                // Use the actual amount from order notes instead of the dummy payment amount
                 if (order.notes.actualAmount) {
                     advanceAmount = parseInt(order.notes.actualAmount) / 100;
                 }
             }
         } catch (error) {
-            // Fall back to using actual payment amount
             advanceAmount = payment.amount / 100;
         }
 
