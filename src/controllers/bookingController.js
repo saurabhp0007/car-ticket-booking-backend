@@ -651,7 +651,10 @@ exports.searchAvailableRoutes = catchAsync(async (req, res) => {
         status: 'success',
         results: validRoutes.length,
         data: {
-            routes: validRoutes
+            routes: validRoutes,
+            specialPricing: {
+                A1: 1099
+            }
         }
     });
 });
@@ -727,8 +730,19 @@ exports.createBooking = catchAsync(async (req, res) => {
     session.startTransaction();
 
     try {
-        // 7. Calculate total amount
-        const totalAmount = passengers.length * schedule.pricePerSeat;
+        // 7. Calculate total amount with special price for seat A1
+        let totalAmount = 0;
+        const A1_SPECIAL_PRICE = 1099;
+        
+        // Calculate price for each seat, with A1 having a fixed price
+        for (const seat of selectedSeats) {
+            if (seat === 'A1') {
+                totalAmount += A1_SPECIAL_PRICE;
+            } else {
+                totalAmount += schedule.pricePerSeat;
+            }
+        }
+
         const advanceAmount = Math.round(totalAmount * 0.4); // 40% of total amount
         const remainingAmount = Math.round(totalAmount * 0.6); // 60% of total amount
 
@@ -1251,6 +1265,17 @@ exports.getAvailableSeats = catchAsync(async (req, res) => {
         });
     }
 
+    // Add special pricing for A1 seat
+    const seatLayout = schedule.seatLayout.map(seat => {
+        if (seat.seatNumber === 'A1') {
+            return {
+                ...seat,
+                specialPrice: 1099
+            };
+        }
+        return seat;
+    });
+
     res.status(200).json({
         status: 'success',
         data: {
@@ -1259,7 +1284,10 @@ exports.getAvailableSeats = catchAsync(async (req, res) => {
                 date: schedule.date,
                 availableSeats: schedule.availableSeats,
                 pricePerSeat: schedule.pricePerSeat,
-                seatLayout: schedule.seatLayout
+                seatLayout: seatLayout,
+                specialPricing: {
+                    A1: 1099
+                }
             }
         }
     });
@@ -1452,3 +1480,179 @@ exports.getDriverBookingsWithTravelDate = async (req, res) => {
     });
   }
 };
+
+
+exports.createOfflineBooking = catchAsync(async (req, res) => {
+    // This endpoint is for admin users only to create confirmed bookings without payment
+    // Check if the user is an admin in your auth middleware before this point
+  
+    const {
+      routeId,
+      routeScheduleId,
+      carId,
+      passengers,
+      selectedSeats,
+      isOfflineBooking,
+      paymentStatus,
+      status
+    } = req.body;
+  
+    // 1. Validate input
+    if (!routeId || !routeScheduleId || !passengers || !selectedSeats) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Please provide all required booking details'
+      });
+    }
+  
+    if (passengers.length !== selectedSeats.length) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Number of passengers must match number of selected seats'
+      });
+    }
+  
+    // 3. Get route schedule and check availability
+    const schedule = await RouteSchedule.findById(routeScheduleId);
+    
+    if (!schedule) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Schedule not found'
+      });
+    }
+    
+    // Find the car ID if not provided directly
+    let bookingCarId = carId;
+    if (!bookingCarId) {
+      // If carId not in request, try to get it from the route
+      const route = await Route.findById(routeId);
+      if (route && route.carId) {
+        bookingCarId = route.carId;
+      } else {
+        return res.status(400).json({
+          status: 'fail',
+          message: 'Car ID is required and could not be determined from the route'
+        });
+      }
+    }
+  
+    // 4. Check if schedule is active
+    if (schedule.status !== 'active') {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'This schedule is not active for booking'
+      });
+    }
+  
+    // 5. Check if enough seats are available
+    if (schedule.availableSeats < passengers.length) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Not enough seats available'
+      });
+    }
+  
+    // 6. Verify selected seats are available
+    const unavailableSeats = schedule.seatLayout.filter(
+      seat => selectedSeats.includes(seat.seatNumber) && seat.isBooked
+    );
+  
+    if (unavailableSeats.length > 0) {
+      return res.status(400).json({
+        status: 'fail',
+        message: `Seats ${unavailableSeats.map(s => s.seatNumber).join(', ')} are already booked`
+      });
+    }
+  
+    // Create a session for transaction
+    const session = await mongoose.startSession();
+    session.startTransaction();
+  
+    try {
+      // 7. Calculate total amount with special price for seat A1
+      let totalAmount = 0;
+      const A1_SPECIAL_PRICE = 1099;
+      
+      // Calculate price for each seat, with A1 having a fixed price
+      for (const seat of selectedSeats) {
+        if (seat === 'A1') {
+          totalAmount += A1_SPECIAL_PRICE;
+        } else {
+          totalAmount += schedule.pricePerSeat;
+        }
+      }
+  
+      // Get route details before creating booking
+      const route = await Route.findById(routeId).session(session);
+      if (!route) {
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(404).json({
+          status: 'fail',
+          message: 'Route not found'
+        });
+      }
+  
+      // For offline bookings, we directly create a confirmed booking
+      const booking = await Booking.create([{
+        userId: req.user.id, // The admin creating the booking
+        routeId,
+        routeScheduleId,
+        carId: bookingCarId,
+        passengers,
+        selectedSeats,
+        totalAmount,
+        status: status || 'confirmed', // For offline bookings, directly confirmed
+        paymentStatus: paymentStatus || 'completed', // For offline bookings, marked as completed
+        paymentDetails: {
+          totalAmount,
+          paymentDate: new Date(),
+          offlineBooking: true // Flag to indicate this was an offline booking
+        },
+        isOfflineBooking: true
+      }], { session });
+      
+      const newBooking = booking[0]; // Get the first item since create returns an array with session
+  
+      // Update seat availability in schedule
+      const updatedSchedule = await RouteSchedule.findByIdAndUpdate(
+        routeScheduleId,
+        {
+          $inc: { availableSeats: -passengers.length },
+          $set: {
+            'seatLayout.$[elem].isBooked': true
+          }
+        },
+        {
+          arrayFilters: [{ 'elem.seatNumber': { $in: selectedSeats } }],
+          new: true,
+          session
+        }
+      );
+  
+      // Commit the transaction
+      await session.commitTransaction();
+      session.endSession();
+  
+      // Send response
+      res.status(201).json({
+        status: 'success',
+        data: {
+          booking: newBooking,
+          message: 'Offline booking created successfully'
+        }
+      });
+    } catch (error) {
+      // Abort transaction on error
+      await session.abortTransaction();
+      session.endSession();
+      
+      console.error('Error in offline booking creation:', error);
+      res.status(500).json({
+        status: 'error',
+        message: 'Failed to create offline booking',
+        details: error.message
+      });
+    }
+  });

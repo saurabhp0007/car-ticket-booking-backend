@@ -29,10 +29,17 @@ router.get('/admin/bookings/:id',
     bookingController.getBookingDetail
 );
 
+// Admin offline booking route
+router.post('/admin/offline-booking', 
+    authMiddleware, 
+    roleMiddleware(['admin']), 
+    bookingController.createOfflineBooking
+);
+
 // Protect all routes and ensure only drivers can access
 router.use(roleMiddleware(['driver']));
 
-// Example route definition
+// Example route definition   
 router.get('/driver-schedules', bookingController.getDriverRouteSchedules);
 
 // Define the route for fetching bookings with travel date
