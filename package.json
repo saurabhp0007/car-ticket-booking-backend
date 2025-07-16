@@ -4,7 +4,7 @@
   "description": "Backend for Car Ticket Booking App",
   "main": "server.js",
   "scripts": {
-    "start": "node app.js",
+    "start": "nodemon app.js",
     "dev": "nodemon app.js"
   },
   "dependencies": {
