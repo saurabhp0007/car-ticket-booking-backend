@@ -2,9 +2,9 @@
   "name": "car-ticket-booking-backend",
   "version": "1.0.0",
   "description": "Backend for Car Ticket Booking App",
-  "main": "server.js",
+  "main": "app.js",
   "scripts": {
-    "start": "nodemon app.js",
+    "start": "node app.js",
     "dev": "nodemon app.js"
   },
   "dependencies": {
